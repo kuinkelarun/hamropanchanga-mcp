@@ -276,6 +276,29 @@ If `/health` shows fewer than expected tools, check the **Deploy logs** tab.
 
 ## 8. Connect the React app
 
+### 8.1 Lock down the `userLlmConfigs` collection in `firestore.rules`
+
+**Before deploying the React app**, add a deny rule so the browser client can never read or write the collection that stores encrypted LLM credentials. The chat backend uses the Firebase **Admin SDK**, which bypasses security rules, so it is unaffected.
+
+Add this block to `firestore.rules` in the React app repo (inside `service cloud.firestore { match /databases/{database}/documents { … } }`):
+
+```
+match /userLlmConfigs/{uid} {
+  allow read, write: if false;
+}
+```
+
+Then deploy the rules:
+
+```bash
+cd family-tree-app
+firebase deploy --only firestore:rules
+```
+
+Without this rule, a signed-in user could read another user's encrypted ciphertext from the browser. Even though the values are encrypted with `LLM_CONFIG_ENC_KEY` (which lives only in the backend), defence-in-depth: keep the collection closed to all client access.
+
+### 8.2 Point the React build at the Railway backend
+
 Add one env var to the Firebase-hosted React app's build environment. In CRA this is a build-time var — set it where you run `npm run build`:
 
 ```bash
@@ -292,18 +315,27 @@ firebase deploy --only hosting
 
 The React `chatBackendService.js` already reads this variable and falls back to `http://localhost:3001` if unset.
 
+### 8.3 User flow after deploy
+
+- User signs in → clicks the profile avatar → **AI Provider** menu item (or clicks **Configure now** from the chat prompt).
+- Enters Anthropic key or Bedrock credentials at `/settings/llm`; hits **Test connection** to verify.
+- Opens the floating chat (bottom-right) or the dedicated `/chat` page and starts chatting.
+
 ---
 
 ## 9. Known gaps to close before production traffic
 
 | # | Gap | Fix |
 |---|---|---|
-| 1 | React `/settings/llm` page not yet built. | Users have no UI to enter their keys. The backend is ready (`PUT /api/llm-config`) — just the form is pending. |
-| 2 | `DEV_PASSTHROUGH_UID` disables auth. | Ensure it is **unset** in the production Railway environment. |
-| 3 | No per-user rate limiting. | Phase D — piggyback on existing `apiKeys.rateLimit` pattern or add a per-uid token counter. |
-| 4 | `generate_tithis` admin tool is stubbed. | Needs an HTTPS variant of the `computeEphemeris` Cloud Function before it can run from a non-browser context. |
-| 5 | No structured logs. | Add a request-id + uid + tool-name logger (pino or similar) before opening to real users. |
-| 6 | Firestore security rules don't deny client access to `userLlmConfigs/*`. | Add `match /userLlmConfigs/{uid} { allow read, write: if false; }` to `firestore.rules` in the React app repo and deploy. The backend uses Admin SDK so is unaffected. |
+| 1 | `DEV_PASSTHROUGH_UID` disables auth. | Ensure it is **unset** in the production Railway environment. |
+| 2 | No per-user rate limiting. | Phase D — piggyback on existing `apiKeys.rateLimit` pattern or add a per-uid token counter. |
+| 3 | `generate_tithis` admin tool is stubbed. | Needs an HTTPS variant of the `computeEphemeris` Cloud Function before it can run from a non-browser context. |
+| 4 | No structured logs. | Add a request-id + uid + tool-name logger (pino or similar) before opening to real users. |
+
+**Resolved during build-out** (do not skip, still required before the first prod deploy):
+
+- **React `/settings/llm` page** — built at `src/components/Settings/LlmSettingsPage.js`, routed in `App.js`, reachable from both `SettingsMenu` (AI Provider item) and the in-chat `UnconfiguredPrompt` CTA.
+- **Firestore rule lockdown for `userLlmConfigs/*`** — see §8.1 above for the exact rule block and deploy command.
 
 ---
 
