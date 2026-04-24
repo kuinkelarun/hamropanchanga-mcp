@@ -12,6 +12,24 @@ function normalize(s: string | undefined): string {
   return (s ?? "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 }
 
+/**
+ * Map a paksha string (Nepali script or English) to canonical English
+ * PascalCase ('Shukla' / 'Krishna') — the form the React UI stores and renders.
+ * Returns the original input if it can't be matched (caller decides whether to throw).
+ */
+function pakshaToEnglish(value: string | undefined): "Shukla" | "Krishna" | string {
+  if (!value) return "";
+  const v = String(value).trim();
+  const vl = v.toLowerCase();
+  if (v === "शुक्लपक्ष" || v === "शुक्ल" || vl === "shukla" || vl.includes("shuk") || vl.includes("शुक")) {
+    return "Shukla";
+  }
+  if (v === "कृष्णपक्ष" || v === "कृष्ण" || vl === "krishna" || vl.includes("krish") || vl.includes("कृष्ण")) {
+    return "Krishna";
+  }
+  return v;
+}
+
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const tithiSpecSchema = z.object({
@@ -171,9 +189,17 @@ export function registerEventTools(server: McpServer): void {
           );
         }
         dateKey = resolved;
+        // Persist tithi in the same shape the React UI writes, so saved events
+        // render correctly across both clients:
+        //   { id: "<paksha>-<tithiName>", name, paksha: 'Shukla'|'Krishna', month }
+        const pakshaEn = pakshaToEnglish(args.tithi.paksha);
+        const pakshaKey = pakshaEn === "Shukla" || pakshaEn === "Krishna"
+          ? pakshaEn.toLowerCase()
+          : String(args.tithi.paksha || "").toLowerCase();
         tithiPayload = {
-          paksha: args.tithi.paksha,
-          tithiName: args.tithi.tithi_name,
+          id: `${pakshaKey}-${args.tithi.tithi_name}`,
+          name: args.tithi.tithi_name,
+          paksha: pakshaEn,
           month: args.tithi.month,
         };
       } else {
