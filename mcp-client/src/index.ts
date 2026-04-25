@@ -46,6 +46,18 @@ async function main(): Promise<void> {
 
   app.use("/api/llm-config", authMiddleware, createLlmConfigRouter());
   app.use("/api/admin/llm-config", authMiddleware, createAdminLlmConfigRouter());
+
+  // Lightweight check: is an LLM available for this user (own key OR global shared key)?
+  app.get("/api/chat/available", authMiddleware, async (req: import("./auth.js").AuthedRequest, res) => {
+    try {
+      const { createLlmClientForUser } = await import("./providers.js");
+      const client = await createLlmClientForUser(req.uid!);
+      res.json({ available: client !== null });
+    } catch {
+      res.json({ available: false });
+    }
+  });
+
   app.post("/api/chat", authMiddleware, createChatHandler(mcp));
   app.post("/api/chat/stream", authMiddleware, createStreamingChatHandler(mcp));
 
