@@ -46,10 +46,28 @@ export async function authMiddleware(
 }
 
 /**
- * Throws an Error("forbidden") if the given uid is not in the adminList collection.
- * Use inside route handlers: await assertAdmin(uid) then catch as 403.
+ * Throws an Error("forbidden") unless the uid is recognised as admin by any
+ * of the three mechanisms used in the app:
+ *   1. adminList/{uid} Firestore doc exists
+ *   2. Firebase custom claim  customClaims.admin === true
+ *   3. users/{uid}.role === 'admin'
  */
 export async function assertAdmin(uid: string): Promise<void> {
-  const snap = await db().collection("adminList").doc(uid).get();
-  if (!snap.exists) throw new Error("forbidden");
+  // 1. adminList collection
+  const adminSnap = await db().collection("adminList").doc(uid).get();
+  if (adminSnap.exists) return;
+
+  // 2. Firebase custom claims
+  try {
+    const userRecord = await admin.auth().getUser(uid);
+    if ((userRecord.customClaims as Record<string, unknown> | undefined)?.admin === true) return;
+  } catch {
+    // getUser failure is non-fatal for this check
+  }
+
+  // 3. users collection role field
+  const userSnap = await db().collection("users").doc(uid).get();
+  if (userSnap.exists && userSnap.data()?.role === "admin") return;
+
+  throw new Error("forbidden");
 }

@@ -295,7 +295,9 @@ export async function saveGlobalConfig(input: SaveConfigInput): Promise<GlobalMa
   const ref = db().collection(GLOBAL_COLLECTION).doc(GLOBAL_DOC_ID);
   const existing = await ref.get();
   const createdAt = existing.exists ? existing.data()!.createdAt ?? now : now;
-  const enabled: boolean = existing.exists ? Boolean(existing.data()!.enabled) : false;
+  // Default to enabled:true on first save so the key is immediately active.
+  // On subsequent saves the existing enabled state is preserved.
+  const enabled: boolean = existing.exists ? Boolean(existing.data()!.enabled) : true;
 
   if (input.provider === "anthropic") {
     if (!input.anthropic?.apiKey) throw new Error("anthropic.apiKey is required");
