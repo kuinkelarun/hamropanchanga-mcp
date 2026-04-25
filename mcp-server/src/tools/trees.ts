@@ -112,7 +112,13 @@ export function registerTreeTools(server: McpServer): void {
       };
 
       const ref = await firestore.collection(COLLECTIONS.TREES).add(docData);
-      return ok({ id: ref.id, title, ownerUid: ctx.uid, ownerEmail: ctx.email ?? null, primary_member_name });
+      return ok({
+        id: ref.id,
+        title,
+        ownerUid: ctx.uid,
+        ownerEmail: ctx.email ?? null,
+        next_required_action: `Tree created. You MUST now call add_member for the primary member "${primary_member_name}" (tree_id: "${ref.id}"). Before calling add_member, ask the user for: gender, date of birth, and any other details they want to include.`,
+      });
     },
   );
 
