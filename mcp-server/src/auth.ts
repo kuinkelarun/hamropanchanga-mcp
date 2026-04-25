@@ -32,18 +32,26 @@ export async function loadAuthContext(uid: string): Promise<AuthContext> {
   };
 }
 
+/**
+ * Stdio-mode only: set the current user's uid before each tool dispatch.
+ * MCP over stdio is sequential so this is safe (no concurrent interleaving).
+ */
+let _stdioCurrentUid: string | null = null;
+export function setStdioCurrentUid(uid: string | null): void {
+  _stdioCurrentUid = uid;
+}
+
 export async function getAuthContext(): Promise<AuthContext> {
   const ctx = contextStorage.getStore();
   if (ctx) return ctx;
-  const uid = process.env.TEST_USER_ID;
+  const uid = _stdioCurrentUid ?? process.env.TEST_USER_ID;
   if (!uid) {
     throw new Error(
-      "No auth context. In stdio mode set TEST_USER_ID; in HTTP mode wrap tool execution in runWithAuth().",
+      "No auth context. In stdio mode call the _set_auth_uid tool before tool dispatch; in HTTP mode wrap tool execution in runWithAuth().",
     );
   }
   return loadAuthContext(uid);
 }
-
 export function assertAdmin(ctx: AuthContext): void {
   if (ctx.role !== "admin") throw new Error("Admin role required for this tool");
 }

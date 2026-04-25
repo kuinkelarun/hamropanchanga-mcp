@@ -111,7 +111,7 @@ export function createChatHandler(mcp: McpClientHandle) {
 
         const toolResultBlocks: Anthropic.ToolResultBlockParam[] = [];
         for (const tu of toolUses) {
-          const result = await mcp.callTool(tu.name, tu.input as Record<string, unknown>);
+          const result = await mcp.callTool(tu.name, tu.input as Record<string, unknown>, uid);
           toolResults.push({ name: tu.name, input: tu.input, result });
           toolResultBlocks.push({
             type: "tool_result",
