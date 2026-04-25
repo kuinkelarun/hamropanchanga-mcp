@@ -89,9 +89,9 @@ export function registerTreeTools(server: McpServer): void {
     "Create a new family tree owned by the authenticated user.",
     {
       title: z.string().describe("Name/title of the new family tree"),
-      contact: z.string().optional().describe("Contact information for the tree (phone/email)"),
-      location: z.string().optional().describe("Geographic location associated with the tree"),
-      primary_member_name: z.string().optional().describe("Name of the primary member"),
+      contact: z.string().describe("Contact information for the tree (phone/email)"),
+      location: z.string().describe("Geographic location associated with the tree"),
+      primary_member_name: z.string().describe("Name of the primary member"),
     },
     async ({ title, contact, location, primary_member_name }) => {
       const ctx = await getAuthContext();
@@ -101,15 +101,15 @@ export function registerTreeTools(server: McpServer): void {
         title,
         ownerUid: ctx.uid,
         ownerEmail: ctx.email ?? null,
+        contact,
+        location,
+        primaryMemberName: primary_member_name,
         sharedWith: {},
         sharedWithEmails: [],
         deleted: false,
         createdAt: now,
         updatedAt: now,
       };
-      if (contact !== undefined) docData.contact = contact;
-      if (location !== undefined) docData.location = location;
-      if (primary_member_name !== undefined) docData.primaryMemberName = primary_member_name;
 
       const ref = await firestore.collection(COLLECTIONS.TREES).add(docData);
       return ok({ id: ref.id, title, ownerUid: ctx.uid, ownerEmail: ctx.email ?? null });
