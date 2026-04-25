@@ -152,7 +152,11 @@ export function registerEventTools(server: McpServer): void {
 
   server.tool(
     "create_event",
-    "Create a calendar event. Either provide an AD `date` OR a `tithi` spec (paksha + tithi_name + month) for tithi-based events. Tithi events are typically yearly-recurring.",
+    `Create a calendar event. Before calling this tool, ALWAYS ask the user two clarifying questions if not already answered:
+1. Should this event be linked to a family member or family tree, or is it a standalone calendar event? (If linked, collect tree_id/member_id first.)
+2. Should this event be public (visible to all users)? — Only admin users can set is_public=true; inform non-admin users this option is not available to them.
+
+Either provide an AD \`date\` OR a \`tithi\` spec (paksha + tithi_name + month) for tithi-based events. Tithi events are typically yearly-recurring.`,
     {
       title: z.string().min(1),
       date: z.string().regex(DATE_RE).optional(),
