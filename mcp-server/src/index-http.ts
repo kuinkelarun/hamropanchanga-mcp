@@ -31,8 +31,16 @@ async function resolveUidFromRequest(req: express.Request): Promise<string> {
   return verifyFirebaseIdToken(token);
 }
 
+interface McpSession {
+  transport: StreamableHTTPServerTransport;
+  uid: string;
+}
+
 async function main(): Promise<void> {
   initFirebase();
+
+  // Session store: mcp-session-id → active transport + owner uid
+  const sessions = new Map<string, McpSession>();
 
   const app = express();
   app.use(express.json({ limit: "1mb" }));
@@ -42,6 +50,23 @@ async function main(): Promise<void> {
   });
 
   app.all("/mcp", async (req, res) => {
+    const existingSessionId = req.header("mcp-session-id");
+
+    // ── Existing session: route to the stored transport ──
+    if (existingSessionId && sessions.has(existingSessionId)) {
+      const { transport, uid } = sessions.get(existingSessionId)!;
+      try {
+        const ctx = await loadAuthContext(uid);
+        await runWithAuth(ctx, () => transport.handleRequest(req, res, req.body));
+      } catch (err) {
+        if (!res.headersSent) {
+          res.status(500).json({ error: (err as Error).message });
+        }
+      }
+      return;
+    }
+
+    // ── New session: authenticate and initialise ──
     let uid: string;
     try {
       uid = await resolveUidFromRequest(req);
@@ -55,9 +80,23 @@ async function main(): Promise<void> {
       await runWithAuth(ctx, async () => {
         const server = new McpServer({ name: "hamropanchanga", version: "0.1.0" });
         registerTools(server);
+
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (sessionId) => {
+            sessions.set(sessionId, { transport, uid });
+          },
         });
+
+        transport.onclose = () => {
+          for (const [id, s] of sessions) {
+            if (s.transport === transport) {
+              sessions.delete(id);
+              break;
+            }
+          }
+        };
+
         await server.connect(transport);
         await transport.handleRequest(req, res, req.body);
       });
