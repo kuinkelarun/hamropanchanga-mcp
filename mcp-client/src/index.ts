@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import { connectMcpServer } from "./mcp-client.js";
 import { authMiddleware } from "./auth.js";
-import { createChatHandler } from "./chat.js";
+import { createChatHandler, createStreamingChatHandler } from "./chat.js";
 import { createLlmConfigRouter } from "./llm-config-routes.js";
 import { initFirebase } from "./firebase.js";
 
@@ -46,6 +46,7 @@ async function main(): Promise<void> {
 
   app.use("/api/llm-config", authMiddleware, createLlmConfigRouter());
   app.post("/api/chat", authMiddleware, createChatHandler(mcp));
+  app.post("/api/chat/stream", authMiddleware, createStreamingChatHandler(mcp));
 
   const port = Number(process.env.PORT ?? 3001);
   app.listen(port, () => {

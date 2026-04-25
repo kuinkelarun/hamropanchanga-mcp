@@ -23,6 +23,121 @@ When a user asks to connect members into a graph (parent/child/spouse edges), te
 
 Dates use YYYY-MM-DD (AD). If the user gives a BS (Nepali) date, use convert_bs_to_ad to translate. "Today" means Nepal Time (Asia/Kathmandu). Use get_today to anchor.`;
 
+/** SSE helper — writes a typed event to the response. */
+function sseWrite(res: Response, event: string, data: unknown): void {
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+/**
+ * Streaming variant of the chat handler.
+ * Emits SSE events:
+ *   tool_call  { name, input }          — each MCP tool as it fires
+ *   done       { reply, toolCalls, provider, model }  — final answer
+ *   error      { message }              — on failure
+ */
+export function createStreamingChatHandler(mcp: McpClientHandle) {
+  return async function chatStream(req: AuthedRequest, res: Response): Promise<void> {
+    const uid = req.uid;
+    if (!uid) {
+      res.status(401).json({ error: "Unauthenticated" });
+      return;
+    }
+
+    const body = req.body as ChatRequestBody;
+    if (!body?.messages?.length) {
+      res.status(400).json({ error: "messages[] required" });
+      return;
+    }
+
+    let llm;
+    try {
+      llm = await createLlmClientForUser(uid);
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message });
+      return;
+    }
+    if (!llm) {
+      res.status(409).json({
+        error: "llm_not_configured",
+        message: "Configure your AI provider in Settings before chatting.",
+      });
+      return;
+    }
+
+    // Open the SSE stream
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    const model = body.model ?? llm.defaultModel;
+
+    const system: Anthropic.TextBlockParam[] = [
+      { type: "text", text: SYSTEM_PROMPT },
+      ...(body.context
+        ? [{ type: "text" as const, text: `Current UI context: ${JSON.stringify(body.context)}` }]
+        : []),
+    ];
+
+    const tools = mcp.tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      input_schema: t.input_schema,
+    }));
+
+    const messages: Anthropic.MessageParam[] = body.messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    const toolResults: Array<{ name: string; input: unknown; result: string }> = [];
+    const MAX_HOPS = 6;
+
+    try {
+      for (let hop = 0; hop < MAX_HOPS; hop++) {
+        const response = await llm.create({
+          model,
+          max_tokens: 1024,
+          system,
+          tools: tools as Anthropic.Tool[],
+          messages,
+        });
+
+        const toolUses = response.content.filter(
+          (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
+        );
+        if (toolUses.length === 0) {
+          const text = response.content
+            .filter((b): b is Anthropic.TextBlock => b.type === "text")
+            .map((b) => b.text)
+            .join("\n");
+          sseWrite(res, "done", { reply: text, toolCalls: toolResults, provider: llm.provider, model });
+          res.end();
+          return;
+        }
+
+        messages.push({ role: "assistant", content: response.content });
+
+        const toolResultBlocks: Anthropic.ToolResultBlockParam[] = [];
+        for (const tu of toolUses) {
+          // Emit tool_call event immediately so the UI can show it live
+          sseWrite(res, "tool_call", { name: tu.name, input: tu.input });
+          const result = await mcp.callTool(tu.name, tu.input as Record<string, unknown>, uid);
+          toolResults.push({ name: tu.name, input: tu.input, result });
+          toolResultBlocks.push({ type: "tool_result", tool_use_id: tu.id, content: result });
+        }
+        messages.push({ role: "user", content: toolResultBlocks });
+      }
+
+      sseWrite(res, "error", { message: "Tool hop limit exceeded" });
+      res.end();
+    } catch (err) {
+      sseWrite(res, "error", { message: (err as Error).message });
+      res.end();
+    }
+  };
+}
+
 export function createChatHandler(mcp: McpClientHandle) {
   return async function chat(req: AuthedRequest, res: Response): Promise<void> {
     const uid = req.uid;
