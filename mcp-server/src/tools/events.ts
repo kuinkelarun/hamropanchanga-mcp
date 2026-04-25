@@ -152,8 +152,10 @@ export function registerEventTools(server: McpServer): void {
 
   server.tool(
     "create_event",
-    `Create a calendar event. Before calling this tool, ALWAYS ask the user two clarifying questions if not already answered:
-1. Should this event be linked to a family member or family tree, or is it a standalone calendar event? (If linked, collect tree_id/member_id first.)
+    `Create a calendar event. Before calling this tool, ALWAYS ask the user these clarifying questions if not already answered:
+1. Should this event be a standalone calendar event, or linked to a specific family member?
+   - If linked to a member: ask for the TREE NAME (e.g. "Sharma Family Tree") and then the MEMBER'S NAME inside that tree. Do NOT ask for IDs — resolve them automatically from the names.
+   - A member always belongs to a tree, so both tree name and member name are required together.
 2. Should this event be public (visible to all users)? — Only admin users can set is_public=true; inform non-admin users this option is not available to them.
 
 Either provide an AD \`date\` OR a \`tithi\` spec (paksha + tithi_name + month) for tithi-based events. Tithi events are typically yearly-recurring.`,
@@ -163,8 +165,8 @@ Either provide an AD \`date\` OR a \`tithi\` spec (paksha + tithi_name + month) 
       tithi: tithiSpecSchema.optional(),
       description: z.string().optional(),
       repetition: z.enum(["none", "monthly", "yearly"]).optional().default("none"),
-      tree_id: z.string().optional(),
-      member_id: z.string().optional(),
+      tree_title: z.string().optional().describe("Name of the family tree to link this event to. Use the tree's display name, not its ID."),
+      member_name: z.string().optional().describe("Display name of the family member to link this event to. Requires tree_title. Do not ask the user for an ID."),
       is_public: z.boolean().optional().default(false),
     },
     async (args) => {
@@ -178,8 +180,41 @@ Either provide an AD \`date\` OR a \`tithi\` spec (paksha + tithi_name + month) 
       if (args.date && args.tithi) {
         throw new Error("Provide only one of `date` or `tithi`, not both");
       }
-      if (args.tree_id) {
-        await resolveTreeByTitleOrId(ctx.uid, ctx.email, { tree_id: args.tree_id });
+      if (args.member_name && !args.tree_title) {
+        throw new Error("member_name requires tree_title — please provide the tree name first");
+      }
+
+      let resolvedTreeId: string | null = null;
+      let resolvedMemberId: string | null = null;
+
+      if (args.tree_title) {
+        const { id: treeId } = await resolveTreeByTitleOrId(ctx.uid, ctx.email, { tree_title: args.tree_title });
+        resolvedTreeId = treeId;
+
+        if (args.member_name) {
+          const membersSnap = await db()
+            .collection(COLLECTIONS.TREES)
+            .doc(treeId)
+            .collection(COLLECTIONS.TREE_MEMBERS)
+            .get();
+          const query = normalize(args.member_name);
+          const matches = membersSnap.docs.filter((d) => {
+            const data = d.data();
+            return normalize(data.nameSearchable || data.name).includes(query);
+          });
+          if (matches.length === 0) {
+            throw new Error(
+              `No member named "${args.member_name}" found in tree "${args.tree_title}". Check the spelling or use list_members to see available members.`,
+            );
+          }
+          if (matches.length > 1) {
+            const names = matches.map((m) => m.data().name).join(", ");
+            throw new Error(
+              `Multiple members match "${args.member_name}" in tree "${args.tree_title}": ${names}. Please be more specific.`,
+            );
+          }
+          resolvedMemberId = matches[0].id;
+        }
       }
 
       let dateKey: string;
@@ -221,8 +256,8 @@ Either provide an AD \`date\` OR a \`tithi\` spec (paksha + tithi_name + month) 
         isPublic: !!args.is_public,
         createdBy: ctx.uid,
         createdByAdmin: ctx.role === "admin",
-        treeId: args.tree_id ?? null,
-        memberId: args.member_id ?? null,
+        treeId: resolvedTreeId,
+        memberId: resolvedMemberId,
         createdAt: Timestamp.now(),
       };
       const ref = await db().collection(COLLECTIONS.CALENDAR_EVENTS).add(payload);
