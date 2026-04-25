@@ -126,16 +126,116 @@ The chat backend encrypts every per-user LLM secret with AES-256-GCM before writ
 
 ### 4.7 Google Secret Manager (recommended)
 
-Per your earlier decision, the encryption key and Firebase service-account JSON should live in Google Secret Manager, not directly in Railway variables. Two ways to wire this up:
+The two sensitive values — `LLM_CONFIG_ENC_KEY` and `FIREBASE_SERVICE_ACCOUNT_JSON` — should live in Google Secret Manager as the system of record, with Railway holding copies as plain env vars. This gives you audit history and rotation semantics in GCP while keeping the runtime dead simple (Railway reads `process.env`, no SDK wiring).
 
-**Simple path (recommended):** store the values in Secret Manager for audit/rotation history, but **copy-paste into Railway variables** at deploy time. The backend reads them directly from `process.env`. No code changes needed. Use Secret Manager as the system of record.
+There are two ways to connect the two systems:
 
-**Fully automated path:** have the backend fetch secrets from Secret Manager at boot. Requires:
-- Adding `@google-cloud/secret-manager` to `mcp-client/package.json`.
-- A GCP service-account JSON with `roles/secretmanager.secretAccessor` mounted into Railway (via `GOOGLE_APPLICATION_CREDENTIALS_JSON` env var).
-- A small loader that resolves `LLM_CONFIG_ENC_KEY` and `FIREBASE_SERVICE_ACCOUNT_JSON` from Secret Manager before `initFirebase()` runs.
+- **Simple path (recommended, walked through below):** store the values in Secret Manager; copy-paste them into Railway variables at deploy time. No code changes.
+- **Fully automated path:** have the backend fetch secrets from Secret Manager at boot. Requires `@google-cloud/secret-manager` in `mcp-client/package.json`, a GCP service account with `roles/secretmanager.secretAccessor` mounted into Railway via `GOOGLE_APPLICATION_CREDENTIALS_JSON`, and a loader that resolves both secrets before `initFirebase()` runs. Skip this for MVP — the simple path has the same blast radius (Railway already holds everything once the app boots) and a much smaller surface area.
 
-Skip the automated path for MVP; the simple path is enough.
+#### 4.7.1 Secrets and where they end up
+
+| GCP Secret Manager name | Railway env var | Consumed by |
+|---|---|---|
+| `hamropanchanga-llm-enc-key` | `LLM_CONFIG_ENC_KEY` | `mcp-client/src/encryption.ts` — AES-256-GCM key for per-user LLM credentials. |
+| `hamropanchanga-firebase-sa` | `FIREBASE_SERVICE_ACCOUNT_JSON` | `mcp-server/src/firebase.ts` + `mcp-client/src/firebase.ts` — Firebase Admin SDK credential. |
+
+#### 4.7.2 Prerequisites
+
+- `gcloud` CLI installed and authenticated (`gcloud auth login`).
+- Active project set: `gcloud config set project hamropanchanga`.
+- Your user (or a service account you're impersonating) has `roles/secretmanager.admin` on the project.
+
+Enable the API once per project:
+
+```bash
+gcloud services enable secretmanager.googleapis.com
+```
+
+#### 4.7.3 Store `LLM_CONFIG_ENC_KEY`
+
+Generate a fresh 32-byte base64 key **once** (not per deploy — rotating this key invalidates every saved per-user LLM config):
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+Create the secret and add the value as the first version:
+
+```bash
+gcloud secrets create hamropanchanga-llm-enc-key \
+  --replication-policy=automatic
+
+# Use echo -n so no trailing newline sneaks in — with a newline the value
+# decodes to 33 bytes and encryption.ts throws "must decode to 32 bytes".
+echo -n "PASTE_THE_BASE64_KEY_HERE" | \
+  gcloud secrets versions add hamropanchanga-llm-enc-key --data-file=-
+```
+
+> **Pitfall:** `echo "key"` (without `-n`) appends `\n` to the stored value. The backend's `encryption.ts` base64-decodes and hard-checks exactly 32 bytes — an extra newline becomes 33 and the service refuses to boot. If you used plain `echo`, add a new version with `echo -n` and point Railway at the fixed version.
+
+#### 4.7.4 Store `FIREBASE_SERVICE_ACCOUNT_JSON`
+
+Download a service-account key for the `hamropanchanga` Firebase project (Console → Project Settings → Service accounts → *Generate new private key*). Assume it saved to `~/Downloads/hamropanchanga-sa.json`.
+
+```bash
+gcloud secrets create hamropanchanga-firebase-sa \
+  --replication-policy=automatic
+
+gcloud secrets versions add hamropanchanga-firebase-sa \
+  --data-file="$HOME/Downloads/hamropanchanga-sa.json"
+
+# Delete the local copy once the secret is stored — it's a long-lived
+# credential and shouldn't linger on disk.
+rm "$HOME/Downloads/hamropanchanga-sa.json"
+```
+
+The JSON shape is preserved verbatim; `firebase.ts` does `JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON!)`.
+
+#### 4.7.5 Pull values out and paste into Railway
+
+At deploy time (or when rotating), print each secret and paste into the matching Railway variable under **Service → Variables**:
+
+```bash
+# Copy the output and paste as Railway env var: LLM_CONFIG_ENC_KEY
+gcloud secrets versions access latest --secret=hamropanchanga-llm-enc-key
+
+# Copy the output and paste as Railway env var: FIREBASE_SERVICE_ACCOUNT_JSON
+# Railway's UI accepts multi-line values — paste the full JSON including braces.
+gcloud secrets versions access latest --secret=hamropanchanga-firebase-sa
+```
+
+While you're in the Variables tab, also set the non-sensitive companions:
+
+```
+FIREBASE_PROJECT_ID=hamropanchanga
+FIREBASE_DATABASE_ID=hamropanchanga-db
+```
+
+Redeploy (Railway auto-redeploys on variable change).
+
+#### 4.7.6 Verify
+
+```bash
+curl https://<railway-url>/health
+# Expected:
+# {"status":"ok","tools":["list_trees",…],"fallbackEnvEnabled":false}
+```
+
+If `/health` 500s or the container loops on restart, the first 20 lines of the **Deploy logs** tab almost always name the culprit:
+- `LLM_CONFIG_ENC_KEY must decode to 32 bytes` → you copied the key with a trailing newline. Redo §4.7.3 with `echo -n`.
+- `FirebaseError: ... invalid_grant` or `PERMISSION_DENIED` → the service-account JSON is truncated or from the wrong project. Redo §4.7.4.
+
+#### 4.7.7 Rotation
+
+- **`hamropanchanga-firebase-sa`** — safe to rotate any time. Generate a new key in the Firebase console, `gcloud secrets versions add` a new version, repaste into Railway, redeploy. Then revoke the old key in the Firebase console.
+- **`hamropanchanga-llm-enc-key`** — **destructive**. Every `userLlmConfigs/{uid}` document is encrypted with the current key; rotating it makes all existing ciphertexts unreadable and every user has to re-enter their Anthropic / Bedrock credentials on `/settings/llm`. Only rotate on suspected compromise. If you do, post a banner in the UI before swapping the env var.
+
+#### 4.7.8 Why Simple path is good enough
+
+- **Audit trail:** `gcloud secrets versions list hamropanchanga-llm-enc-key` shows every value ever stored and who added it. You lose nothing by not fetching at runtime.
+- **Blast radius:** both paths require the value to sit in Railway env memory while the container runs. The only difference is *how* it got there — a human paste vs. an API call with cached credentials. Fewer moving parts wins.
+- **Zero code change:** `encryption.ts` and `firebase.ts` already read `process.env`. No new dependency, no new failure mode at boot.
 
 ---
 
