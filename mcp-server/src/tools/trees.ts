@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Timestamp } from "firebase-admin/firestore";
 import { db } from "../firebase.js";
 import { COLLECTIONS } from "../constants.js";
 import { getAuthContext } from "../auth.js";
@@ -83,6 +84,38 @@ async function listAccessibleTrees(
 }
 
 export function registerTreeTools(server: McpServer): void {
+  server.tool(
+    "create_tree",
+    "Create a new family tree owned by the authenticated user.",
+    {
+      title: z.string().describe("Name/title of the new family tree"),
+      contact: z.string().optional().describe("Contact information for the tree (phone/email)"),
+      location: z.string().optional().describe("Geographic location associated with the tree"),
+      primary_member_name: z.string().optional().describe("Name of the primary member"),
+    },
+    async ({ title, contact, location, primary_member_name }) => {
+      const ctx = await getAuthContext();
+      const firestore = db();
+      const now = Timestamp.now();
+      const docData: Record<string, unknown> = {
+        title,
+        ownerUid: ctx.uid,
+        ownerEmail: ctx.email ?? null,
+        sharedWith: {},
+        sharedWithEmails: [],
+        deleted: false,
+        createdAt: now,
+        updatedAt: now,
+      };
+      if (contact !== undefined) docData.contact = contact;
+      if (location !== undefined) docData.location = location;
+      if (primary_member_name !== undefined) docData.primaryMemberName = primary_member_name;
+
+      const ref = await firestore.collection(COLLECTIONS.TREES).add(docData);
+      return ok({ id: ref.id, title, ownerUid: ctx.uid, ownerEmail: ctx.email ?? null });
+    },
+  );
+
   server.tool(
     "list_trees",
     "List family trees the authenticated user owns or has been granted access to (via sharedWithEmails). Returns tree metadata and source flag.",
