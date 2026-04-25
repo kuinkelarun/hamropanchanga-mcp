@@ -112,7 +112,41 @@ export function registerTreeTools(server: McpServer): void {
       };
 
       const ref = await firestore.collection(COLLECTIONS.TREES).add(docData);
-      return ok({ id: ref.id, title, ownerUid: ctx.uid, ownerEmail: ctx.email ?? null });
+
+      // Auto-create the primary member in the new tree's members subcollection
+      const nameSearchable = primary_member_name
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      const memberPayload = {
+        name: primary_member_name,
+        nameSearchable,
+        nickname: "",
+        dob: "",
+        dod: "",
+        gender: "unknown",
+        status: "alive",
+        notes: "",
+        location: "",
+        photo: "",
+        createdAt: now,
+        updatedAt: now,
+      };
+      const memberRef = await firestore
+        .collection(COLLECTIONS.TREES)
+        .doc(ref.id)
+        .collection(COLLECTIONS.TREE_MEMBERS)
+        .add(memberPayload);
+
+      return ok({
+        id: ref.id,
+        title,
+        ownerUid: ctx.uid,
+        ownerEmail: ctx.email ?? null,
+        primary_member: { id: memberRef.id, name: primary_member_name },
+      });
     },
   );
 
