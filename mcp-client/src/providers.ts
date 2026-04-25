@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { LlmConfigDecrypted, LlmProvider } from "./llm-config-store.js";
-import { getUserConfigDecrypted } from "./llm-config-store.js";
+import { getUserConfigDecrypted, getGlobalConfigDecrypted } from "./llm-config-store.js";
 
 export type { LlmProvider };
 
@@ -77,8 +77,13 @@ async function buildFromEnv(): Promise<LlmClient | null> {
 }
 
 export async function createLlmClientForUser(uid: string): Promise<LlmClient | null> {
+  // 1. User's own config takes priority
   const cfg = await getUserConfigDecrypted(uid);
   if (cfg) return buildLlmClientFromConfig(cfg);
+  // 2. Admin-shared global config (only if enabled)
+  const globalCfg = await getGlobalConfigDecrypted();
+  if (globalCfg) return buildLlmClientFromConfig(globalCfg);
+  // 3. Env fallback
   if (process.env.LLM_CONFIG_FALLBACK_ENV === "true") {
     return buildFromEnv();
   }

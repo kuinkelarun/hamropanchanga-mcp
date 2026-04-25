@@ -3,7 +3,7 @@ import cors from "cors";
 import { connectMcpServer } from "./mcp-client.js";
 import { authMiddleware } from "./auth.js";
 import { createChatHandler, createStreamingChatHandler } from "./chat.js";
-import { createLlmConfigRouter } from "./llm-config-routes.js";
+import { createLlmConfigRouter, createAdminLlmConfigRouter } from "./llm-config-routes.js";
 import { initFirebase } from "./firebase.js";
 
 async function main(): Promise<void> {
@@ -45,6 +45,7 @@ async function main(): Promise<void> {
   });
 
   app.use("/api/llm-config", authMiddleware, createLlmConfigRouter());
+  app.use("/api/admin/llm-config", authMiddleware, createAdminLlmConfigRouter());
   app.post("/api/chat", authMiddleware, createChatHandler(mcp));
   app.post("/api/chat/stream", authMiddleware, createStreamingChatHandler(mcp));
 
