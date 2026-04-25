@@ -5,10 +5,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { initFirebase } from "./firebase.js";
 import { registerTools } from "./tools/index.js";
-import { loadAuthContext, runWithAuth, verifyFirebaseIdToken } from "./auth.js";
+import { loadAuthContext, runWithAuth, verifyFirebaseIdToken, verifyApiKey } from "./auth.js";
 
-// HTTP/SSE entry point for hosted deployment (Phase 3).
-// Authenticates each request before dispatching to the MCP server.
+// HTTP/SSE entry point for hosted deployment.
+// Supports two authentication methods:
+//   1. npcal_* API key  — external clients (Claude Desktop, Claude Code, Copilot, MCP Inspector)
+//   2. Firebase ID token — in-app chat backend (x-auth-type: firebase, default)
 
 async function resolveUidFromRequest(req: express.Request): Promise<string> {
   const devUid = process.env.DEV_PASSTHROUGH_UID;
@@ -18,12 +20,15 @@ async function resolveUidFromRequest(req: express.Request): Promise<string> {
   const match = header.match(/^Bearer\s+(.+)$/i);
   if (!match) throw new Error("Missing Bearer token");
 
-  const authType = (req.header("x-auth-type") ?? "firebase").toLowerCase();
-  if (authType === "firebase") {
-    return verifyFirebaseIdToken(match[1]);
+  const token = match[1];
+
+  // npcal_* prefix → API key auth (external clients, no Firebase SDK needed)
+  if (token.startsWith("npcal_")) {
+    return verifyApiKey(token);
   }
-  // TODO Phase 3: OAuth access token verification for external Claude clients.
-  throw new Error(`Unsupported x-auth-type: ${authType}`);
+
+  // Default → Firebase ID token
+  return verifyFirebaseIdToken(token);
 }
 
 async function main(): Promise<void> {

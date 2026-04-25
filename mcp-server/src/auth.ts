@@ -1,7 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
 import admin from "firebase-admin";
+import { Timestamp } from "firebase-admin/firestore";
 import { db } from "./firebase.js";
-import { COLLECTIONS } from "./constants.js";
+import { COLLECTIONS, nptToday } from "./constants.js";
 
 export interface AuthContext {
   uid: string;
@@ -64,4 +66,46 @@ export function assertPermission(ctx: AuthContext, perm: string): void {
 export async function verifyFirebaseIdToken(idToken: string): Promise<string> {
   const decoded = await admin.auth().verifyIdToken(idToken);
   return decoded.uid;
+}
+
+/**
+ * Verifies an `npcal_*` API key against the `apiKeys` Firestore collection.
+ * Checks active status, enforces daily rate limit, and returns the owner uid.
+ */
+export async function verifyApiKey(rawKey: string): Promise<string> {
+  const hash = createHash("sha256").update(rawKey).digest("hex");
+  const snap = await db()
+    .collection(COLLECTIONS.API_KEYS)
+    .where("keyHash", "==", hash)
+    .where("active", "==", true)
+    .limit(1)
+    .get();
+
+  if (snap.empty) throw new Error("Invalid or revoked API key");
+
+  const docRef = snap.docs[0].ref;
+  const data = snap.docs[0].data();
+
+  const today = nptToday();
+  const rateLimit: number = data.rateLimit ?? 1000;
+  let requestsToday: number = data.requestsToday ?? 0;
+  const rateLimitDate: string = data.rateLimitDate ?? "";
+
+  // Reset counter if it's a new day
+  if (rateLimitDate !== today) {
+    requestsToday = 0;
+  }
+
+  if (requestsToday >= rateLimit) {
+    throw new Error("API key daily rate limit exceeded");
+  }
+
+  // Increment atomically
+  await docRef.update({
+    requestsToday: requestsToday + 1,
+    rateLimitDate: today,
+    lastUsed: Timestamp.now(),
+  });
+
+  return data.uid as string;
 }
