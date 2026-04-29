@@ -457,20 +457,69 @@ The React `chatBackendService.js` already reads this variable and falls back to 
 
 ---
 
-## 11. Optional — second Railway service for external Claude clients (Phase 3)
+## 11. Optional — second Railway service for external AI clients
 
-When you're ready to expose the MCP server itself to hosted Claude.ai or other external clients (not the in-app chat), add a **second Railway service** pointing at the same repo with a different CMD:
+When you're ready to expose the MCP server to external AI clients (Claude Desktop, Claude Code, MCP Inspector) — independent of the in-app chat — deploy a **second Railway service** pointing at the same repo with a different entry point.
 
-- **Dockerfile override** (or a separate `Dockerfile.mcp-http`):
-  ```
-  WORKDIR /app/mcp-server
-  CMD ["node", "dist/index-http.js"]
-  ```
-- **Required variables:** Firebase trio from §4.1, plus `PORT`. No LLM keys needed — this service speaks MCP, not LLM.
-- **Auth:** still accepts Firebase ID tokens today; OAuth provider (Clerk) wires in at Phase 3 of the main planning doc.
-- **Endpoint:** `POST /mcp` with `Authorization: Bearer <firebase-id-token>`.
+### 11.1 Deploy the standalone MCP server
 
-Skip this section entirely until the in-app chat is stable.
+- **Dockerfile:** use the pre-built `Dockerfile.mcp-http` (already in the repo root). It builds only `mcp-server`, excludes `mcp-client` and all LLM SDK dependencies, and starts `node dist/index-http.js`.
+- **Required variables:** Firebase trio from §4.1, plus `PORT` (auto-injected by Railway). No LLM keys — this service speaks MCP only, it does not call the LLM itself.
+- **Railway service name (suggested):** `hamropanchanga-mcp-server`
+- **Endpoint:** `POST /mcp` — this is the only public route.
+
+### 11.2 Auth for external clients
+
+The standalone server accepts two token types on every request via the `Authorization: Bearer <token>` header:
+
+| Token type | Format | How to obtain | Lifetime |
+|---|---|---|---|
+| **API key** | `npcal_<48 hex chars>` | Request via in-app Settings → API Keys; admin approves | Long-lived (until revoked) |
+| **Firebase ID token** | Standard JWT | `firebase.auth().currentUser.getIdToken()` in the React app | ~1 hour (auto-refreshed by SDK) |
+
+API keys are the correct choice for external AI clients — they are long-lived and don't require a Firebase session. Firebase ID tokens are better suited for short-lived authenticated sessions from the web app.
+
+### 11.3 Connecting Claude Desktop
+
+> **Important:** Claude Desktop does **not** support `"type": "http"` MCP config — that format only works on the `claude.ai` web interface (Custom Connectors). Claude Desktop only supports stdio-based servers. Use `mcp-remote` as a stdio proxy.
+
+**Prerequisite:** Node.js 18+ on the client machine (needed for `npx`). No separate install step — `npx -y` fetches `mcp-remote` automatically on first use.
+
+Open `%APPDATA%\Claude\claude_desktop_config.json` on Windows (macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "hamropanchanga": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://hamropanchanga-mcp-server.up.railway.app/mcp",
+        "--header",
+        "Authorization:Bearer npcal_your_key_here"
+      ]
+    }
+  }
+}
+```
+
+Replace `npcal_your_key_here` with the API key obtained in §11.2. Fully quit and relaunch Claude Desktop — the "🔌" icon should show a **hamropanchanga** server with all tools listed.
+
+### 11.4 Connecting Claude Code
+
+Claude Code supports native HTTP transport, so `mcp-remote` is not needed:
+
+```bash
+claude mcp add hamropanchanga \
+  --transport http \
+  --url https://hamropanchanga-mcp-server.up.railway.app/mcp \
+  --header "Authorization: Bearer npcal_your_key_here"
+```
+
+### 11.5 When to skip this section
+
+Skip entirely until the in-app chat (Service 1) is stable. The in-app chat backend already bundles `mcp-server` as a subprocess — external client access is an additive deployment, not a prerequisite for anything.
 
 ---
 

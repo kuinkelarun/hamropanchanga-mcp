@@ -175,9 +175,59 @@ The response includes the assistant reply and every tool call made along the way
 
 ---
 
-## Path 3 — Run the MCP server in HTTP mode
+## Path 3 — Connect to the hosted MCP server (external clients)
 
-For when you're ready to host the MCP server remotely or let the chat backend reach it over HTTP instead of stdio.
+Use this path when the MCP server is already deployed to Railway (see `RAILWAY_DEPLOYMENT.md` §11) and you want to connect an external AI client — Claude Desktop, Claude Code, or MCP Inspector — to it using a long-lived API key.
+
+**Prerequisites:**
+- An `npcal_*` API key issued via the in-app settings (Settings → API Keys → Request key → admin approval). The key is shown exactly once on pickup.
+- Node.js 18+ installed (needed for `npx mcp-remote`).
+
+> **Note on `"type": "http"`:** Claude Desktop does **not** support native HTTP MCP servers — only the `claude.ai` web interface (Custom Connectors) does. Claude Desktop only supports stdio-based servers. `mcp-remote` bridges this gap by acting as a local stdio proxy that forwards calls to the remote HTTP endpoint.
+
+---
+
+### Connect Claude Desktop to the hosted server
+
+`mcp-remote` is a lightweight stdio proxy. The `-y` flag auto-installs it via `npx` — no separate `npm install` step needed.
+
+Open `%APPDATA%\Claude\claude_desktop_config.json` on Windows (macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "hamropanchanga": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://hamropanchanga-mcp-server.up.railway.app/mcp",
+        "--header",
+        "Authorization:Bearer npcal_your_key_here"
+      ]
+    }
+  }
+}
+```
+
+Replace `npcal_your_key_here` with your actual API key. Fully quit and relaunch Claude Desktop — the "🔌" icon should show a **hamropanchanga** server with all tools listed.
+
+---
+
+### Connect Claude Code to the hosted server
+
+```bash
+claude mcp add hamropanchanga \
+  --transport http \
+  --url https://hamropanchanga-mcp-server.up.railway.app/mcp \
+  --header "Authorization: Bearer npcal_your_key_here"
+```
+
+Claude Code supports native HTTP transport, so `mcp-remote` is not needed here.
+
+---
+
+### Run the HTTP server locally (development)
 
 ```bash
 cd mcp-server
@@ -186,10 +236,9 @@ npm run start:http
 ```
 
 Requests hit `POST /mcp` with either:
-- `Authorization: Bearer <firebase-id-token>` + `X-Auth-Type: firebase`, or
-- `DEV_PASSTHROUGH_UID=<uid>` in the environment for local testing
-
-OAuth for external Claude.ai clients is a Phase 3 follow-up (not wired yet).
+- `Authorization: Bearer <npcal_* API key>` (long-lived, for external clients), or
+- `Authorization: Bearer <firebase-id-token>` (short-lived JWT, for signed-in users), or
+- `DEV_PASSTHROUGH_UID=<uid>` set in the environment (local testing only — bypasses all auth)
 
 ---
 
@@ -221,6 +270,8 @@ The chat backend treats Anthropic and Bedrock as drop-in alternatives — switch
 **Chat backend exits with `Cannot find module '@anthropic-ai/bedrock-sdk'`** — Optional dep didn't install. Run `npm install --include=optional` in `mcp-client/`.
 
 **Claude Desktop doesn't show the server** — Check the JSON is valid (no trailing commas), the path in `args` is correct and absolute, `dist/index.js` exists (did you run `npm run build`?), and fully quit Claude Desktop (not just close the window) before reopening.
+
+**Claude Desktop shows `"type": "http"` errors or fails to connect to the hosted server** — Claude Desktop does not support `"type": "http"` config. Use the `npx mcp-remote` approach shown in Path 3. The `"type": "http"` format is only supported by the `claude.ai` web interface (Custom Connectors), not the desktop app.
 
 **`EADDRINUSE` on port 3001** — Chat backend: change `PORT` in `.env`.
 
