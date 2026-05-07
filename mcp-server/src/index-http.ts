@@ -61,6 +61,8 @@ async function main(): Promise<void> {
 
   const app = express();
   app.use(express.json({ limit: "1mb" }));
+  // OAuth token endpoint requires form-encoded body (RFC 6749)
+  app.use(express.urlencoded({ extended: false }));
 
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
@@ -68,12 +70,21 @@ async function main(): Promise<void> {
 
   // ── OAuth 2.1 endpoints (MCP Authorization spec) ──────────────────────────
   app.get("/.well-known/oauth-authorization-server", handleOAuthMetadata);
+  // OAuth Protected Resource Metadata (RFC 9470) — tells clients where the MCP endpoint is
+  app.get("/.well-known/oauth-protected-resource", (_req, res) => {
+    const base = (process.env.MCP_SERVER_BASE_URL ?? "").replace(/\/$/, "");
+    res.json({
+      resource: base,
+      authorization_servers: [base],
+    });
+  });
   app.post("/register", handleClientRegistration);
   app.get("/authorize", handleAuthorize);
   app.get("/oauth/callback", handleOAuthCallback);
   app.post("/token", handleTokenExchange);
 
-  app.all("/mcp", async (req, res) => {
+  // Handle MCP requests at both /mcp and / (Claude.ai posts to the base URL)
+  async function handleMcp(req: express.Request, res: express.Response): Promise<void> {
     const existingSessionId = req.header("mcp-session-id");
 
     // ── Existing session: route to the stored transport ──
@@ -129,7 +140,10 @@ async function main(): Promise<void> {
         res.status(500).json({ error: (err as Error).message });
       }
     }
-  });
+  }
+
+  app.all("/mcp", handleMcp);
+  app.all("/", handleMcp);
 
   const port = Number(process.env.PORT ?? 3000);
   app.listen(port, () => {
