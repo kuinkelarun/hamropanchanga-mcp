@@ -5,12 +5,20 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { initFirebase } from "./firebase.js";
 import { registerTools } from "./tools/index.js";
-import { loadAuthContext, runWithAuth, verifyFirebaseIdToken, verifyApiKey } from "./auth.js";
+import { loadAuthContext, runWithAuth, verifyFirebaseIdToken, verifyApiKey, verifyMcpAccessToken } from "./auth.js";
+import {
+  handleOAuthMetadata,
+  handleClientRegistration,
+  handleAuthorize,
+  handleOAuthCallback,
+  handleTokenExchange,
+} from "./oauth.js";
 
 // HTTP/SSE entry point for hosted deployment.
-// Supports two authentication methods:
-//   1. npcal_* API key  — external clients (Claude Desktop, Claude Code, Copilot, MCP Inspector)
-//   2. Firebase ID token — in-app chat backend (x-auth-type: firebase, default)
+// Supports three authentication methods:
+//   1. npcal_* API key      — manually-issued keys (Claude Desktop, MCP Inspector, etc.)
+//   2. MCP OAuth JWT        — issued by this server's /token endpoint (Claude.ai, Cursor, etc.)
+//   3. Firebase ID token    — in-app chat backend
 
 async function resolveUidFromRequest(req: express.Request): Promise<string> {
   const devUid = process.env.DEV_PASSTHROUGH_UID;
@@ -22,12 +30,21 @@ async function resolveUidFromRequest(req: express.Request): Promise<string> {
 
   const token = match[1];
 
-  // npcal_* prefix → API key auth (external clients, no Firebase SDK needed)
+  // npcal_* prefix → API key auth (backward compat, no Firebase SDK needed)
   if (token.startsWith("npcal_")) {
     return verifyApiKey(token);
   }
 
-  // Default → Firebase ID token
+  // JWT with correct issuer → MCP OAuth access token
+  if (process.env.MCP_SERVER_BASE_URL && process.env.MCP_JWT_SECRET) {
+    try {
+      return verifyMcpAccessToken(token);
+    } catch {
+      // Not a valid MCP JWT — fall through to Firebase
+    }
+  }
+
+  // Default → Firebase ID token (in-app users)
   return verifyFirebaseIdToken(token);
 }
 
@@ -48,6 +65,13 @@ async function main(): Promise<void> {
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
   });
+
+  // ── OAuth 2.1 endpoints (MCP Authorization spec) ──────────────────────────
+  app.get("/.well-known/oauth-authorization-server", handleOAuthMetadata);
+  app.post("/register", handleClientRegistration);
+  app.get("/authorize", handleAuthorize);
+  app.get("/oauth/callback", handleOAuthCallback);
+  app.post("/token", handleTokenExchange);
 
   app.all("/mcp", async (req, res) => {
     const existingSessionId = req.header("mcp-session-id");

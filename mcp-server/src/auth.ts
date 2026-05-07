@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import admin from "firebase-admin";
 import { Timestamp } from "firebase-admin/firestore";
+import jwt from "jsonwebtoken";
 import { db } from "./firebase.js";
 import { COLLECTIONS, nptToday } from "./constants.js";
 
@@ -66,6 +67,18 @@ export function assertPermission(ctx: AuthContext, perm: string): void {
 export async function verifyFirebaseIdToken(idToken: string): Promise<string> {
   const decoded = await admin.auth().verifyIdToken(idToken);
   return decoded.uid;
+}
+
+/**
+ * Verifies a short-lived JWT issued by this MCP server's OAuth token endpoint.
+ * Returns the uid stored in the `sub` claim.
+ */
+export function verifyMcpAccessToken(token: string): string {
+  const secret = process.env.MCP_JWT_SECRET;
+  if (!secret) throw new Error("MCP_JWT_SECRET not configured");
+  const payload = jwt.verify(token, secret) as jwt.JwtPayload;
+  if (typeof payload.sub !== "string") throw new Error("Invalid MCP token: missing sub");
+  return payload.sub;
 }
 
 /**

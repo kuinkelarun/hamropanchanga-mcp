@@ -12,6 +12,9 @@ export const COLLECTIONS = {
   API_KEY_REQUESTS: "apiKeyRequests",
   API_KEYS: "apiKeys",
   SITE_SETTINGS: "siteSettings",
+  OAUTH_CLIENTS: "oauthClients",
+  OAUTH_CODES: "oauthCodes",
+  OAUTH_TOKENS: "oauthTokens",
 } as const;
 
 export const NPT_OFFSET_MS = (5 * 60 + 45) * 60 * 1000;
