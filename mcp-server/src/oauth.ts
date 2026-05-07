@@ -159,9 +159,13 @@ export async function handleAuthorize(
   });
 
   // Redirect to Google OAuth
-  const firebaseCallbackUrl = `${baseUrl()}/oauth/callback`;
-  const googleAuthUrl = buildGoogleOAuthUrl(firebaseCallbackUrl, nonce);
-  res.redirect(googleAuthUrl);
+  try {
+    const firebaseCallbackUrl = `${baseUrl()}/oauth/callback`;
+    const googleAuthUrl = buildGoogleOAuthUrl(firebaseCallbackUrl, nonce);
+    res.redirect(googleAuthUrl);
+  } catch (err) {
+    res.status(500).json({ error: "server_error", error_description: (err as Error).message });
+  }
 }
 
 function buildGoogleOAuthUrl(callbackUrl: string, state: string): string {
@@ -213,6 +217,7 @@ export async function handleOAuthCallback(
   try {
     uid = await exchangeGoogleCodeForUid(googleCode, `${baseUrl()}/oauth/callback`);
   } catch (err) {
+    console.error("[oauth] exchangeGoogleCodeForUid failed:", (err as Error).message);
     res.status(401).send(`Failed to exchange auth code: ${(err as Error).message}`);
     return;
   }
