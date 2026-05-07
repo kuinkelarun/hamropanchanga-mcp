@@ -40,6 +40,18 @@ function firebaseWebApiKey(): string {
   return k;
 }
 
+function googleClientId(): string {
+  const id = process.env.GOOGLE_CLIENT_ID;
+  if (!id) throw new Error("GOOGLE_CLIENT_ID is not set");
+  return id;
+}
+
+function googleClientSecret(): string {
+  const s = process.env.GOOGLE_CLIENT_SECRET;
+  if (!s) throw new Error("GOOGLE_CLIENT_SECRET is not set");
+  return s;
+}
+
 function s256(verifier: string): string {
   return createHash("sha256").update(verifier).digest("base64url");
 }
@@ -146,23 +158,23 @@ export async function handleAuthorize(
     expiresAt,
   });
 
-  // Redirect to Firebase's Google OAuth endpoint
+  // Redirect to Google OAuth
   const firebaseCallbackUrl = `${baseUrl()}/oauth/callback`;
-  const googleAuthUrl = buildFirebaseGoogleOAuthUrl(firebaseCallbackUrl, nonce);
+  const googleAuthUrl = buildGoogleOAuthUrl(firebaseCallbackUrl, nonce);
   res.redirect(googleAuthUrl);
 }
 
-function buildFirebaseGoogleOAuthUrl(callbackUrl: string, state: string): string {
-  // Firebase's sign-in-with-provider REST redirect
+function buildGoogleOAuthUrl(callbackUrl: string, state: string): string {
   const params = new URLSearchParams({
-    client_id: firebaseWebApiKey(),
-    providerId: "google.com",
-    scopes: "email profile",
-    redirectUri: callbackUrl,
+    client_id: googleClientId(),
+    redirect_uri: callbackUrl,
+    response_type: "code",
+    scope: "openid email profile",
     state,
-    returnSecureToken: "true",
+    access_type: "online",
+    prompt: "select_account",
   });
-  return `https://www.googleapis.com/identitytoolkit/v3/relyingparty/verifyAssertion?${params}`;
+  return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
 }
 
 // ─── oauth callback (Firebase → MCP) ────────────────────────────────────────
@@ -229,32 +241,54 @@ export async function handleOAuthCallback(
 }
 
 async function exchangeGoogleCodeForUid(code: string, redirectUri: string): Promise<string> {
-  const apiKey = firebaseWebApiKey();
+  // Step 1: Exchange the Google auth code for tokens at Google's token endpoint
+  const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code,
+      client_id: googleClientId(),
+      client_secret: googleClientSecret(),
+      redirect_uri: redirectUri,
+      grant_type: "authorization_code",
+    }),
+  });
 
-  // Exchange Google auth code for a Firebase ID token via the Identity Toolkit REST API
-  const resp = await fetch(
+  if (!tokenResp.ok) {
+    const body = await tokenResp.text();
+    throw new Error(`Google token exchange failed: ${tokenResp.status} ${body}`);
+  }
+
+  const tokenData = (await tokenResp.json()) as { id_token?: string; error?: string };
+  if (tokenData.error || !tokenData.id_token) {
+    throw new Error(`Google token exchange error: ${tokenData.error ?? "no id_token"}`);
+  }
+
+  // Step 2: Pass the Google ID token to Firebase to get the Firebase uid
+  const apiKey = firebaseWebApiKey();
+  const fbResp = await fetch(
     `https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp?key=${apiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        requestUri: redirectUri,
-        postBody: `code=${encodeURIComponent(code)}&providerId=google.com`,
+        postBody: `id_token=${encodeURIComponent(tokenData.id_token)}&providerId=google.com`,
+        requestUri: "http://localhost",
         returnSecureToken: true,
         returnIdpCredential: true,
       }),
     },
   );
 
-  if (!resp.ok) {
-    const body = await resp.text();
-    throw new Error(`Firebase token exchange failed: ${resp.status} ${body}`);
+  if (!fbResp.ok) {
+    const body = await fbResp.text();
+    throw new Error(`Firebase signInWithIdp failed: ${fbResp.status} ${body}`);
   }
 
-  const data = (await resp.json()) as { localId?: string; error?: { message: string } };
-  if (data.error) throw new Error(data.error.message);
-  if (!data.localId) throw new Error("No localId in Firebase response");
-  return data.localId;
+  const fbData = (await fbResp.json()) as { localId?: string; error?: { message: string } };
+  if (fbData.error) throw new Error(fbData.error.message);
+  if (!fbData.localId) throw new Error("No localId in Firebase response");
+  return fbData.localId;
 }
 
 // ─── token endpoint ──────────────────────────────────────────────────────────
