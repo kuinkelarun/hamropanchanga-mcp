@@ -69,6 +69,11 @@ async function main(): Promise<void> {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   app.use("/public", express.static(path.join(__dirname, "../public")));
 
+  // Serve favicon so AI clients (Claude.ai etc.) show the app logo
+  app.get("/favicon.ico", (_req, res) => {
+    res.sendFile(path.join(__dirname, "../public/HamroPanchangaLogo.png"));
+  });
+
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
   });

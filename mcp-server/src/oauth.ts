@@ -70,6 +70,8 @@ export function handleOAuthMetadata(_req: express.Request, res: express.Response
     code_challenge_methods_supported: ["S256"],
     token_endpoint_auth_methods_supported: ["none"],
     scopes_supported: ["read", "write"],
+    service_name: "HamroPanchanga",
+    logo_uri: `${base}/public/HamroPanchangaLogo.png`,
   });
 }
 
