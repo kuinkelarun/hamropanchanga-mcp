@@ -99,6 +99,7 @@ async function main(): Promise<void> {
         const ctx = await loadAuthContext(uid);
         await runWithAuth(ctx, () => transport.handleRequest(req, res, req.body));
       } catch (err) {
+        console.error(`[mcp] ${req.method} ${req.path} session error:`, (err as Error).message);
         if (!res.headersSent) {
           res.status(500).json({ error: (err as Error).message });
         }
@@ -111,6 +112,7 @@ async function main(): Promise<void> {
     try {
       uid = await resolveUidFromRequest(req);
     } catch (err) {
+      console.warn(`[mcp] ${req.method} ${req.path} auth failed:`, (err as Error).message);
       res.status(401).json({ error: (err as Error).message });
       return;
     }
@@ -136,6 +138,10 @@ async function main(): Promise<void> {
             sessions.set(sessionId, { transport, uid });
           },
         });
+
+        transport.onerror = (err) => {
+          console.error(`[mcp-transport] ${req.method} ${req.path} error:`, err.message);
+        };
 
         transport.onclose = () => {
           for (const [id, s] of sessions) {
