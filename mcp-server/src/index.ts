@@ -9,9 +9,15 @@ import { setStdioCurrentUid } from "./auth.js";
 async function main(): Promise<void> {
   initFirebase();
 
+  const baseUrl = process.env.MCP_SERVER_BASE_URL;
   const server = new McpServer({
     name: "hamropanchanga",
     version: "0.1.0",
+    title: "HamroPanchanga",
+    description: "Nepali calendar, tithi, family tree and events MCP server",
+    ...(baseUrl && {
+      icons: [{ src: `${baseUrl}/public/HamroPanchangaLogo.png`, mimeType: "image/png" }],
+    }),
   });
 
   // Internal tool: called by mcp-client before each user tool dispatch to set

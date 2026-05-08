@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import express from "express";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { initFirebase } from "./firebase.js";
@@ -64,6 +66,9 @@ async function main(): Promise<void> {
   // OAuth token endpoint requires form-encoded body (RFC 6749)
   app.use(express.urlencoded({ extended: false }));
 
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  app.use("/public", express.static(path.join(__dirname, "../public")));
+
   app.get("/health", (_req, res) => {
     res.json({ status: "ok" });
   });
@@ -113,7 +118,16 @@ async function main(): Promise<void> {
     try {
       const ctx = await loadAuthContext(uid);
       await runWithAuth(ctx, async () => {
-        const server = new McpServer({ name: "hamropanchanga", version: "0.1.0" });
+        const baseUrl = process.env.MCP_SERVER_BASE_URL;
+        const server = new McpServer({
+          name: "hamropanchanga",
+          version: "0.1.0",
+          title: "HamroPanchanga",
+          description: "Nepali calendar, tithi, family tree and events MCP server",
+          ...(baseUrl && {
+            icons: [{ src: `${baseUrl}/public/HamroPanchangaLogo.png`, mimeType: "image/png" }],
+          }),
+        });
         registerTools(server);
 
         const transport = new StreamableHTTPServerTransport({
