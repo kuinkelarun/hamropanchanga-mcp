@@ -7,14 +7,14 @@ import { registerCalendarTools } from "./calendar.js";
 import { registerUserTools } from "./users.js";
 import { registerApiKeyTools } from "./api-keys.js";
 
-export function registerTools(server: McpServer): void {
+export function registerTools(server: McpServer, role: "admin" | "superuser" | "user" = "admin"): void {
   registerTreeTools(server);
   registerMemberTools(server);
   registerEventTools(server);
-  registerTithiTools(server);
+  registerTithiTools(server, role);
   registerCalendarTools(server);
-  registerUserTools(server);
-  registerApiKeyTools(server);
+  registerUserTools(server, role);
+  registerApiKeyTools(server, role);
 }
 
 export function ok(payload: unknown) {

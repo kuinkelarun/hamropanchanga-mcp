@@ -24,7 +24,7 @@ const PERMISSIONS_SCHEMA = z
   })
   .partial();
 
-export function registerUserTools(server: McpServer): void {
+export function registerUserTools(server: McpServer, role: "admin" | "superuser" | "user" = "admin"): void {
   server.tool(
     "get_my_profile",
     "Return the authenticated user's profile, role and permissions.",
@@ -41,6 +41,8 @@ export function registerUserTools(server: McpServer): void {
       });
     },
   );
+
+  if (role !== "admin") return;
 
   server.tool(
     "list_users",

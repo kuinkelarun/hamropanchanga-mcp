@@ -15,7 +15,7 @@ function sha256(s: string): string {
   return createHash("sha256").update(s).digest("hex");
 }
 
-export function registerApiKeyTools(server: McpServer): void {
+export function registerApiKeyTools(server: McpServer, role: "admin" | "superuser" | "user" = "admin"): void {
   server.tool(
     "request_api_key",
     "Submit an API key request. Admins review requests before keys are issued.",
@@ -81,6 +81,8 @@ export function registerApiKeyTools(server: McpServer): void {
       return ok({ count: keys.length, keys });
     },
   );
+
+  if (role !== "admin") return;
 
   server.tool(
     "list_api_key_requests",

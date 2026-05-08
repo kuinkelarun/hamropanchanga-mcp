@@ -30,7 +30,7 @@ export async function resolveTithiToDate(
   return candidates[0]?.startDate ?? null;
 }
 
-export function registerTithiTools(server: McpServer): void {
+export function registerTithiTools(server: McpServer, role: "admin" | "superuser" | "user" = "admin"): void {
   server.tool(
     "get_tithi_today",
     "Get the tithi(s) active right now in Nepal Time (Asia/Kathmandu).",
@@ -118,6 +118,8 @@ export function registerTithiTools(server: McpServer): void {
       return ok({ count: matches.length, tithis: matches });
     },
   );
+
+  if (role !== "admin") return;
 
   server.tool(
     "update_tithi",

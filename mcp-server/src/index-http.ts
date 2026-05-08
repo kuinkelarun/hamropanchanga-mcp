@@ -142,7 +142,7 @@ async function main(): Promise<void> {
             icons: [{ src: `${baseUrl}/public/HamroPanchangaLogo.png`, mimeType: "image/png" }],
           }),
         });
-        registerTools(server);
+        registerTools(server, ctx.role);
 
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
