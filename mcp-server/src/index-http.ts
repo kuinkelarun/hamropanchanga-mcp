@@ -74,15 +74,22 @@ async function main(): Promise<void> {
   });
 
   // ── OAuth 2.1 endpoints (MCP Authorization spec) ──────────────────────────
+  // RFC 8414: serve both /.well-known/oauth-authorization-server and
+  // /.well-known/oauth-authorization-server/mcp (path-suffixed form for /mcp endpoint)
   app.get("/.well-known/oauth-authorization-server", handleOAuthMetadata);
+  app.get("/.well-known/oauth-authorization-server/mcp", handleOAuthMetadata);
   // OAuth Protected Resource Metadata (RFC 9470) — tells clients where the MCP endpoint is
-  app.get("/.well-known/oauth-protected-resource", (_req, res) => {
+  // Serve both the root form and the path-suffixed form (/.well-known/oauth-protected-resource/mcp)
+  // because clients connecting to /mcp construct the URL by appending the path per spec.
+  function handleProtectedResource(_req: express.Request, res: express.Response): void {
     const base = (process.env.MCP_SERVER_BASE_URL ?? "").replace(/\/$/, "");
     res.json({
-      resource: base,
+      resource: `${base}/mcp`,
       authorization_servers: [base],
     });
-  });
+  }
+  app.get("/.well-known/oauth-protected-resource", handleProtectedResource);
+  app.get("/.well-known/oauth-protected-resource/mcp", handleProtectedResource);
   app.post("/register", handleClientRegistration);
   app.get("/authorize", handleAuthorize);
   app.get("/oauth/callback", handleOAuthCallback);
