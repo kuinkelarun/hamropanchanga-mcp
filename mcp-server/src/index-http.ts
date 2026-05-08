@@ -14,6 +14,9 @@ import {
   handleAuthorize,
   handleOAuthCallback,
   handleTokenExchange,
+  handleLoginPage,
+  handleGoogleRedirect,
+  handleEmailLogin,
 } from "./oauth.js";
 
 // HTTP/SSE entry point for hosted deployment.
@@ -97,6 +100,9 @@ async function main(): Promise<void> {
   app.get("/.well-known/oauth-protected-resource/mcp", handleProtectedResource);
   app.post("/register", handleClientRegistration);
   app.get("/authorize", handleAuthorize);
+  app.get("/login", handleLoginPage);
+  app.get("/oauth/google-redirect", handleGoogleRedirect);
+  app.post("/oauth/email-login", handleEmailLogin);
   app.get("/oauth/callback", handleOAuthCallback);
   app.post("/token", handleTokenExchange);
 

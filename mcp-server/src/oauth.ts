@@ -160,11 +160,9 @@ export async function handleAuthorize(
     expiresAt,
   });
 
-  // Redirect to Google OAuth
+  // Redirect to our hosted login-choice page (Google or email/password)
   try {
-    const firebaseCallbackUrl = `${baseUrl()}/oauth/callback`;
-    const googleAuthUrl = buildGoogleOAuthUrl(firebaseCallbackUrl, nonce);
-    res.redirect(googleAuthUrl);
+    res.redirect(`${baseUrl()}/login?nonce=${nonce}`);
   } catch (err) {
     res.status(500).json({ error: "server_error", error_description: (err as Error).message });
   }
@@ -181,6 +179,244 @@ function buildGoogleOAuthUrl(callbackUrl: string, state: string): string {
     prompt: "select_account",
   });
   return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+}
+
+// ─── login page (hosted) ────────────────────────────────────────────────────
+
+/**
+ * Serve the hosted login-choice page.
+ * Validates the nonce is still pending before serving HTML.
+ */
+export async function handleLoginPage(
+  req: express.Request,
+  res: express.Response,
+): Promise<void> {
+  const { nonce, error: errorParam } = req.query as Record<string, string>;
+
+  if (!nonce) {
+    res.status(400).send("Missing nonce");
+    return;
+  }
+
+  const pendingSnap = await db().collection(COLLECTIONS.OAUTH_CODES).doc(nonce).get();
+  if (!pendingSnap.exists || pendingSnap.data()!.type !== "pending") {
+    res.status(400).send("Invalid or expired login session. Please return to Claude and try again.");
+    return;
+  }
+  if (pendingSnap.data()!.expiresAt.toMillis() < Date.now()) {
+    await db().collection(COLLECTIONS.OAUTH_CODES).doc(nonce).delete();
+    res.status(400).send("Login session expired. Please return to Claude and try again.");
+    return;
+  }
+
+  const errorMessages: Record<string, string> = {
+    invalid_credentials: "Incorrect email or password.",
+    no_account: "No Hamropanchanga account found for this email. Please contact an admin.",
+    expired: "Login session expired. Please return to Claude and try again.",
+    email_not_verified: "Please verify your email address before connecting. Check your inbox for a verification link.",
+    server_error: "Something went wrong. Please try again.",
+  };
+  const errorMessage = errorParam ? (errorMessages[errorParam] ?? "Something went wrong.") : "";
+
+  const base = baseUrl();
+  // Inline the login HTML with the nonce embedded in form fields / links
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign in to HamroPanchanga</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f3f4f6;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1rem}
+    .card{background:#fff;border-radius:1rem;box-shadow:0 4px 24px rgba(0,0,0,.10);padding:2rem;width:100%;max-width:360px;text-align:center}
+    .logo{width:64px;height:64px;margin:0 auto 1rem}
+    h1{font-size:1.4rem;font-weight:700;margin-bottom:.25rem;color:#111}
+    .subtitle{color:#6b7280;font-size:.875rem;margin-bottom:1.5rem}
+    .btn{display:flex;align-items:center;justify-content:center;gap:.6rem;width:100%;padding:.75rem 1rem;border-radius:.75rem;font-size:.9rem;font-weight:600;cursor:pointer;transition:background .15s,box-shadow .15s;text-decoration:none}
+    .btn-google{background:#fff;border:1px solid #d1d5db;color:#374151;box-shadow:0 1px 3px rgba(0,0,0,.07)}
+    .btn-google:hover{background:#f9fafb}
+    .btn-primary{background:#2563eb;border:none;color:#fff;margin-top:.5rem}
+    .btn-primary:hover{background:#1d4ed8}
+    .divider{display:flex;align-items:center;gap:.75rem;margin:1rem 0;color:#9ca3af;font-size:.75rem;text-transform:uppercase;letter-spacing:.05em}
+    .divider hr{flex:1;border:none;border-top:1px solid #e5e7eb}
+    input{width:100%;padding:.75rem 1rem;border:1px solid #d1d5db;border-radius:.75rem;font-size:.875rem;margin-bottom:.6rem;outline:none;transition:border .15s}
+    input:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.15)}
+    .error{background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;border-radius:.5rem;padding:.6rem .9rem;font-size:.825rem;margin-bottom:1rem;text-align:left}
+    .forgot{font-size:.8rem;color:#6b7280;margin-top:.75rem}
+    .forgot a{color:#2563eb;text-decoration:none}
+    .forgot a:hover{text-decoration:underline}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <img class="logo" src="${base}/public/HamroPanchangaLogo.png" alt="HamroPanchanga" />
+    <h1>Sign in</h1>
+    <p class="subtitle">Connect to HamroPanchanga</p>
+
+    ${errorMessage ? `<div class="error">${errorMessage}</div>` : ""}
+
+    <a class="btn btn-google" href="${base}/oauth/google-redirect?nonce=${nonce}">
+      <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+        <g fill="none" fill-rule="evenodd">
+          <path d="M17.64 9.205c0-.639-.057-1.252-.164-1.841H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
+          <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z" fill="#34A853"/>
+          <path d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z" fill="#FBBC05"/>
+          <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
+        </g>
+      </svg>
+      Continue with Google
+    </a>
+
+    <div class="divider"><hr />or<hr /></div>
+
+    <form method="POST" action="${base}/oauth/email-login">
+      <input type="hidden" name="nonce" value="${nonce}" />
+      <input type="email" name="email" placeholder="Email address" required autocomplete="email" />
+      <input type="password" name="password" placeholder="Password" required autocomplete="current-password" />
+      <button type="submit" class="btn btn-primary">Sign in with email</button>
+    </form>
+
+    <p class="forgot">Forgot your password? <a href="${process.env.MAIN_APP_URL ?? "https://hamropanchanga.com"}">Reset it on the app</a></p>
+  </div>
+</body>
+</html>`);
+}
+
+// ─── google redirect (from login page) ──────────────────────────────────────
+
+/**
+ * Thin redirect: validates the nonce and forwards to Google OAuth.
+ * This preserves the existing Google flow while going through the new login page.
+ */
+export async function handleGoogleRedirect(
+  req: express.Request,
+  res: express.Response,
+): Promise<void> {
+  const { nonce } = req.query as Record<string, string>;
+
+  if (!nonce) {
+    res.status(400).send("Missing nonce");
+    return;
+  }
+
+  const pendingSnap = await db().collection(COLLECTIONS.OAUTH_CODES).doc(nonce).get();
+  if (!pendingSnap.exists || pendingSnap.data()!.type !== "pending") {
+    res.status(400).send("Invalid or expired login session.");
+    return;
+  }
+  if (pendingSnap.data()!.expiresAt.toMillis() < Date.now()) {
+    res.status(400).send("Login session expired. Please return to Claude and try again.");
+    return;
+  }
+
+  const firebaseCallbackUrl = `${baseUrl()}/oauth/callback`;
+  res.redirect(buildGoogleOAuthUrl(firebaseCallbackUrl, nonce));
+}
+
+// ─── email/password login (from login page form) ─────────────────────────────
+
+/**
+ * Accept email + password submitted from the hosted login page.
+ * Authenticates via Firebase Identity Toolkit REST API (signInWithPassword),
+ * then issues an OAuth auth code exactly as handleOAuthCallback() does for Google.
+ */
+export async function handleEmailLogin(
+  req: express.Request,
+  res: express.Response,
+): Promise<void> {
+  const { email, password, nonce } = req.body ?? {};
+
+  if (!email || !password || !nonce) {
+    res.status(400).send("Missing required fields");
+    return;
+  }
+
+  // Load and validate the pending auth session
+  const pendingRef = db().collection(COLLECTIONS.OAUTH_CODES).doc(nonce as string);
+  const pendingSnap = await pendingRef.get();
+
+  if (!pendingSnap.exists || pendingSnap.data()!.type !== "pending") {
+    res.redirect(`${baseUrl()}/login?nonce=${nonce}&error=expired`);
+    return;
+  }
+  if (pendingSnap.data()!.expiresAt.toMillis() < Date.now()) {
+    await pendingRef.delete();
+    res.redirect(`${baseUrl()}/login?nonce=${nonce}&error=expired`);
+    return;
+  }
+
+  const pending = pendingSnap.data()!;
+
+  // Authenticate with Firebase Identity Toolkit REST (signInWithPassword)
+  let uid: string;
+  try {
+    const result = await signInWithEmailPassword(email as string, password as string);
+    uid = result.uid;
+    if (!result.emailVerified) {
+      res.redirect(`${baseUrl()}/login?nonce=${nonce}&error=email_not_verified`);
+      return;
+    }
+  } catch (err) {
+    console.error("[oauth] email login failed:", (err as Error).message);
+    res.redirect(`${baseUrl()}/login?nonce=${nonce}&error=invalid_credentials`);
+    return;
+  }
+
+  // Verify this UID has a Hamropanchanga account
+  const userDoc = await db().collection(COLLECTIONS.USERS).doc(uid).get();
+  if (!userDoc.exists) {
+    res.redirect(`${baseUrl()}/login?nonce=${nonce}&error=no_account`);
+    return;
+  }
+
+  // Issue an auth code — same logic as handleOAuthCallback()
+  const authCode = randomBytes(32).toString("hex");
+  const codeExpiresAt = Timestamp.fromMillis(Date.now() + 5 * 60 * 1000); // 5 min
+
+  await pendingRef.set({
+    type: "code",
+    code: authCode,
+    clientId: pending.clientId,
+    redirectUri: pending.redirectUri,
+    codeChallenge: pending.codeChallenge,
+    codeChallengeMethod: pending.codeChallengeMethod,
+    scope: pending.scope,
+    uid,
+    expiresAt: codeExpiresAt,
+    used: false,
+  });
+
+  const redirectParams = new URLSearchParams({ code: authCode });
+  if (pending.originalState) redirectParams.set("state", pending.originalState);
+  res.redirect(`${pending.redirectUri}?${redirectParams}`);
+}
+
+/**
+ * Sign in with email + password via Firebase Identity Toolkit REST API.
+ * Returns the Firebase UID (localId) on success, throws on failure.
+ */
+async function signInWithEmailPassword(email: string, password: string): Promise<{ uid: string; emailVerified: boolean }> {
+  const apiKey = firebaseWebApiKey();
+  const resp = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, returnSecureToken: true }),
+    },
+  );
+
+  if (!resp.ok) {
+    const body = await resp.text();
+    throw new Error(`Firebase signInWithPassword failed: ${resp.status} ${body}`);
+  }
+
+  const data = (await resp.json()) as { localId?: string; emailVerified?: boolean; error?: { message: string } };
+  if (data.error) throw new Error(data.error.message);
+  if (!data.localId) throw new Error("No localId in Firebase response");
+  return { uid: data.localId, emailVerified: data.emailVerified ?? false };
 }
 
 // ─── oauth callback (Firebase → MCP) ────────────────────────────────────────
